@@ -1,0 +1,135 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Тест AAC-потока для iOS 9</title>
+  <style>
+    body { font: 16px -apple-system, BlinkMacSystemFont, Arial, sans-serif; max-width: 760px; margin: 24px auto; padding: 0 16px; line-height: 1.45; }
+    h1 { font-size: 1.35rem; }
+    button { font: inherit; padding: 10px 14px; margin: 4px 4px 4px 0; }
+    audio { display: block; width: 100%; margin: 12px 0; }
+    #status { padding: 10px; background: #f1f1f1; white-space: pre-wrap; overflow-wrap: anywhere; }
+    #log { font: 13px monospace; white-space: pre-wrap; overflow-wrap: anywhere; background: #f7f7f7; padding: 10px; }
+    .note { color: #555; font-size: .94rem; }
+  </style>
+</head>
+<body>
+  <h1>Тест AAC-потока</h1>
+  <p>Нажми «Запустить поток». Этот тест использует нативный HTML5-плеер и показывает события Safari. Ссылка вставляется отдельно, чтобы не хранить временный токен в файле.</p>
+
+  <label for="url">Полная ссылка на поток:</label>
+  <input id="url" type="url" style="box-sizing:border-box;width:100%;padding:10px;margin:8px 0" placeholder="Вставь актуальную ссылку https://…" autocomplete="off">
+  <div>
+    <button id="start">Запустить поток</button>
+    <button id="stop">Остановить</button>
+    <button id="clear">Очистить журнал</button>
+  </div>
+
+  <audio id="audio" controls preload="none"></audio>
+  <div id="status">Статус: ожидание ссылки.</div>
+  <h2>Журнал событий</h2>
+  <pre id="log">Здесь появятся события audio.</pre>
+
+  <p class="note">Важно: токен в URL может быть временным. Не публикуй HTML с рабочей ссылкой. Если страница открыта через file://, это нормально для такого теста, но некоторые серверы могут ограничивать запросы по User-Agent или Referer.</p>
+
+<script>
+(function () {
+  var audio = document.getElementById('audio');
+  var urlInput = document.getElementById('url');
+  var status = document.getElementById('status');
+  var log = document.getElementById('log');
+
+  function addLog(message) {
+    var time = new Date().toLocaleTimeString();
+    log.textContent += '\n[' + time + '] ' + message;
+  }
+  function setStatus(message) {
+    status.textContent = 'Статус: ' + message;
+  }
+
+  var events = [
+    'loadstart', 'durationchange', 'loadedmetadata', 'loadeddata',
+    'progress', 'canplay', 'canplaythrough', 'play', 'playing',
+    'pause', 'waiting', 'stalled', 'suspend', 'ended', 'abort',
+    'emptied', 'error'
+  ];
+
+  for (var i = 0; i < events.length; i++) {
+    (function (eventName) {
+      audio.addEventListener(eventName, function () {
+        var detail = eventName;
+        if (eventName === 'error') {
+          var e = audio.error;
+          detail += ' | MediaError code=' + (e ? e.code : 'нет');
+          if (e) {
+            var messages = {
+              1: 'загрузка отменена',
+              2: 'сетевая ошибка',
+              3: 'ошибка декодирования',
+              4: 'источник или формат не поддерживается'
+            };
+            detail += ' (' + (messages[e.code] || 'неизвестно') + ')';
+          }
+        }
+        detail += ' | paused=' + audio.paused;
+        detail += ' | readyState=' + audio.readyState;
+        detail += ' | networkState=' + audio.networkState;
+        detail += ' | currentTime=' + (isFinite(audio.currentTime) ? audio.currentTime.toFixed(2) : 'неизвестно');
+        addLog(detail);
+        if (eventName === 'playing') setStatus('браузер сообщает playing; проверь, есть ли звук.');
+        else if (eventName === 'waiting' || eventName === 'stalled') setStatus('ожидание/застой загрузки (' + eventName + ').');
+        else if (eventName === 'error') setStatus('ошибка аудио. Смотри код в журнале.');
+        else if (eventName === 'ended') setStatus('поток завершился.');
+      }, false);
+    })(events[i]);
+  }
+
+  document.getElementById('start').addEventListener('click', function () {
+    var url = urlInput.value.replace(/^\s+|\s+$/g, '');
+    if (!url) {
+      setStatus('сначала вставь ссылку.');
+      return;
+    }
+    log.textContent = '';
+    audio.pause();
+    audio.removeAttribute('src');
+    audio.load();
+    audio.src = url;
+    audio.load();
+    setStatus('запрос запуска отправлен.');
+    addLog('Подготовлен URL; тип содержимого будет определён сервером. Нажата кнопка запуска.');
+    var result;
+    try {
+      result = audio.play();
+      if (result && typeof result.then === 'function') {
+        result.then(function () {
+          addLog('play() Promise выполнен. Это ещё не доказывает, что слышен звук.');
+        }, function (err) {
+          addLog('play() Promise отклонён: ' + (err && err.name ? err.name : 'ошибка') + (err && err.message ? ' — ' + err.message : ''));
+          setStatus('браузер отклонил play().');
+        });
+      } else {
+        addLog('play() не вернул Promise (обычно так бывает в старых браузерах).');
+      }
+    } catch (err) {
+      addLog('Исключение при play(): ' + err);
+      setStatus('ошибка при вызове play().');
+    }
+  });
+
+  document.getElementById('stop').addEventListener('click', function () {
+    audio.pause();
+    setStatus('остановлено вручную.');
+  });
+  document.getElementById('clear').addEventListener('click', function () {
+    log.textContent = 'Журнал очищен.';
+  });
+
+  addLog('Готово. Поддержка AAC в браузере: ' + (audio.canPlayType('audio/aac') || 'пустой ответ'));
+  addLog('Поддержка AAC-LC MIME: ' + (audio.canPlayType('audio/aacp') || 'пустой ответ'));
+  addLog('Поддержка MP3: ' + (audio.canPlayType('audio/mpeg') || 'пустой ответ'));
+})();
+</script>
+</body>
+</html>
